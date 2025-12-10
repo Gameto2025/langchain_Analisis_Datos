@@ -23,7 +23,6 @@ llm = ChatGroq(
 # INFORMACIÓN DEL DATAFRAME — VERSIÓN MEJORADA
 # ---------------------------------------------------------
 def informacion_df(pregunta: str, df: pd.DataFrame) -> str:
-
     n_filas, n_columnas = df.shape
     tipos = df.dtypes.astype(str)
 
@@ -48,7 +47,7 @@ def informacion_df(pregunta: str, df: pd.DataFrame) -> str:
     duplicados = df.duplicated().sum()
 
     plantilla = PromptTemplate(
-        template='''
+        template=''' 
         Eres un analista de datos senior. Con base en la siguiente información del dataset:
 
         - Pregunta del usuario: {pregunta}
@@ -108,15 +107,12 @@ Este informe responde a la solicitud: **{pregunta}**
 ## 🎯 Recomendación
 Puedes continuar con análisis estadísticos, generación de gráficos o transformaciones usando las herramientas del asistente.
 """
-
     return informe
-
 
 # ---------------------------------------------------------
 # RESUMEN ESTADÍSTICO
 # ---------------------------------------------------------
 def resumen_estadistico(pregunta, df):
-
     resumen = df.describe(include='number').transpose().to_string()
 
     plantilla = PromptTemplate(
@@ -142,7 +138,6 @@ def resumen_estadistico(pregunta, df):
         "pregunta": pregunta,
         "resumen": resumen
     })
-
 
 # ---------------------------------------------------------
 # GRÁFICOS
@@ -194,18 +189,14 @@ def generar_grafico(pregunta, df):
 
     return ""
 
-
 # ---------------------------------------------------------
 # HERRAMIENTA PYTHON INTELIGENTE (CORRELACIONES)
 # ---------------------------------------------------------
 def ejecutar_python_inteligente(pregunta: str, df=None):
-
     pregunta_lower = pregunta.lower()
 
     # Detectar si el usuario pregunta por correlaciones
     if "correl" in pregunta_lower or "relación" in pregunta_lower or "correlation" in pregunta_lower:
-
-        # buscar columna objetivo tipo "tiempo"
         col_obj = None
         for c in df.columns:
             if "tiempo" in c.lower():
@@ -233,10 +224,49 @@ def ejecutar_python_inteligente(pregunta: str, df=None):
 **{mejor}** con **{valor:.4f}**
 """
 
-    # Si no es correlación, ejecutar Python normalmente
     repl = PythonAstREPLTool(locals={"df": df})
     return repl.run(pregunta)
 
+# ---------------------------------------------------------
+# NUEVA HERRAMIENTA: INFORME DE INSIGHTS
+# ---------------------------------------------------------
+def generar_insights(pregunta, df):
+    """
+    Genera un informe narrativo con los principales insights del dataset:
+    tendencias, patrones, correlaciones y posibles acciones.
+    """
+    plantilla = PromptTemplate(
+        template="""
+        Eres un analista de datos senior. Analiza el siguiente dataset y responde a la pregunta: {pregunta}
+
+        ================= INFORMACIÓN DEL DATASET =================
+        Columnas y tipos:
+        {columnas}
+        Número de filas: {num_filas}
+        ============================================================
+
+        Genera un informe narrativo:
+        1. Principales patrones y tendencias.
+        2. Variables más relevantes y correlaciones importantes.
+        3. Outliers o valores atípicos.
+        4. Recomendaciones y posibles acciones a tomar.
+
+        Mantén un lenguaje profesional, claro y conciso.
+        """,
+        input_variables=["pregunta", "columnas", "num_filas"]
+    )
+
+    columnas_info = '\n'.join([f"- {col} ({dtype})" for col, dtype in df.dtypes.items()])
+    num_filas = len(df)
+
+    cadena = plantilla | llm | StrOutputParser()
+    informe = cadena.invoke({
+        "pregunta": pregunta,
+        "columnas": columnas_info,
+        "num_filas": num_filas
+    })
+
+    return informe
 
 # ---------------------------------------------------------
 # CREAR HERRAMIENTAS
@@ -271,9 +301,17 @@ def crear_herramientas(df):
         return_direct=True
     )
 
+    herramienta_insights = StructuredTool.from_function(
+        name="Informe de Insights",
+        func=lambda pregunta: generar_insights(pregunta, df),
+        description="Genera un informe narrativo con insights del dataset.",
+        return_direct=True
+    )
+
     return [
         herramienta_info,
         herramienta_resumen,
         herramienta_grafico,
-        herramienta_python
+        herramienta_python,
+        herramienta_insights
     ]
