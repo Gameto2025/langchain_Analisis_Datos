@@ -19,60 +19,102 @@ llm = ChatGroq(
     temperature=0
 )
 
-# -------------------------------------------------------------------
-# HERRAMIENTA: INFORMACIÓN DEL DATAFRAME
-# -------------------------------------------------------------------
-def informacion_df(pregunta, df):
-    shape = df.shape
-    columns = df.dtypes
+# ---------------------------------------------------------
+# INFORMACIÓN DEL DATAFRAME — VERSIÓN MEJORADA
+# ---------------------------------------------------------
+def informacion_df(pregunta: str, df: pd.DataFrame) -> str:
+
+    n_filas, n_columnas = df.shape
+    tipos = df.dtypes.astype(str)
+
+    tabla_tipos = (
+        pd.DataFrame({"Columna": tipos.index, "Tipo de dato": tipos.values})
+        .to_markdown(index=False)
+    )
+
     nulos = df.isnull().sum()
-    nans_str = df.apply(lambda col: col[~col.isna()].astype(str).str.strip().str.lower().eq('nan').sum())
+    porcentaje_nulos = (nulos / len(df) * 100).round(2)
+
+    tabla_nulos = (
+        pd.DataFrame({
+            "Columna": nulos.index,
+            "Nulos": nulos.values,
+            "% Nulos": porcentaje_nulos.values
+        })
+        .sort_values("% Nulos", ascending=False)
+        .to_markdown(index=False)
+    )
+
     duplicados = df.duplicated().sum()
 
     plantilla = PromptTemplate(
-        template="""
-        Eres un analista de datos encargado de presentar un resumen informativo
-        sobre un **DataFrame** a partir de una pregunta: {pregunta}
+        template='''
+        Eres un analista de datos senior. Con base en la siguiente información del dataset:
 
-        ================= INFORMACIÓN DEL DATAFRAME =================
+        - Pregunta del usuario: {pregunta}
+        - Filas: {n_filas}
+        - Columnas: {n_columnas}
 
-        Dimensiones: {shape}
+        Genera un texto narrativo breve, claro y profesional que incluya:
+        1. Una explicación general del dataset.
+        2. Qué tipo de análisis pueden realizarse.
+        3. Recomendaciones de preprocesamiento.
+        4. Qué insights se pueden extraer.
 
-        Columnas y tipos de datos:
-        {columns}
-
-        Valores nulos por columna:
-        {nulos}
-
-        Cadenas 'nan' por columna:
-        {nans_str}
-
-        Filas duplicadas: {duplicados}
-
-        ============================================================
-
-        Ahora redacta un informe:
-        - Título: "## Informe de información general sobre el dataset"
-        - Explica cada punto de forma clara
-        - Recomienda análisis posibles
-        - Recomienda tratamientos de datos
-        """,
-        input_variables=['pregunta','shape','columns','nulos','nans_str','duplicados']
+        NO repitas tablas ni dimensiones — solo narrativa.
+        ''',
+        input_variables=["pregunta", "n_filas", "n_columnas"]
     )
 
     cadena = plantilla | llm | StrOutputParser()
-    return cadena.invoke({
+    narrativa = cadena.invoke({
         "pregunta": pregunta,
-        "shape": shape,
-        "columns": columns,
-        "nulos": nulos,
-        "nans_str": nans_str,
-        "duplicados": duplicados
+        "n_filas": n_filas,
+        "n_columnas": n_columnas
     })
 
-# -------------------------------------------------------------------
-# HERRAMIENTA: RESUMEN ESTADÍSTICO
-# -------------------------------------------------------------------
+    informe = f"""
+# 📊 Informe General del Dataset
+
+Este informe responde a la solicitud: **{pregunta}**  
+
+---
+
+## 🔹 Resumen General
+
+| Métrica | Valor |
+|--------|-------|
+| **Total de filas** | {n_filas} |
+| **Total de columnas** | {n_columnas} |
+| **Filas duplicadas** | {duplicados} |
+
+---
+
+## 🔹 Tipos de columnas
+{tabla_tipos}
+
+---
+
+## 🔹 Valores nulos por columna
+{tabla_nulos}
+
+---
+
+## ✨ Análisis Narrativo
+{narrativa}
+
+---
+
+## 🎯 Recomendación
+Puedes continuar con análisis estadísticos, generación de gráficos o transformaciones usando las herramientas del asistente.
+"""
+
+    return informe
+
+
+# ---------------------------------------------------------
+# RESUMEN ESTADÍSTICO
+# ---------------------------------------------------------
 def resumen_estadistico(pregunta, df):
 
     resumen = df.describe(include='number').transpose().to_string()
@@ -101,15 +143,11 @@ def resumen_estadistico(pregunta, df):
         "resumen": resumen
     })
 
-# -------------------------------------------------------------------
-# HERRAMIENTA: GENERACIÓN DE GRÁFICOS (SIN @tool)
-# -------------------------------------------------------------------
-def generar_grafico(pregunta, df):
-    """
-    Genera un gráfico usando SIEMPRE el DataFrame completo.
-    Devuelve string vacío porque Streamlit muestra el gráfico.
-    """
 
+# ---------------------------------------------------------
+# GRÁFICOS
+# ---------------------------------------------------------
+def generar_grafico(pregunta, df):
     columnas_info = '\n'.join([f"- {col} ({dtype})" for col, dtype in df.dtypes.items()])
     num_filas = len(df)
 
@@ -150,39 +188,88 @@ def generar_grafico(pregunta, df):
 
     exec_globals = {"df": df, "plt": plt, "sns": sns}
     exec(script, exec_globals)
+
     fig = plt.gcf()
     st.pyplot(fig)
 
     return ""
 
-# -------------------------------------------------------------------
+
+# ---------------------------------------------------------
+# HERRAMIENTA PYTHON INTELIGENTE (CORRELACIONES)
+# ---------------------------------------------------------
+def ejecutar_python_inteligente(pregunta: str, df=None):
+
+    pregunta_lower = pregunta.lower()
+
+    # Detectar si el usuario pregunta por correlaciones
+    if "correl" in pregunta_lower or "relación" in pregunta_lower or "correlation" in pregunta_lower:
+
+        # buscar columna objetivo tipo "tiempo"
+        col_obj = None
+        for c in df.columns:
+            if "tiempo" in c.lower():
+                col_obj = c
+                break
+
+        if col_obj is None:
+            return "❌ No encontré ninguna columna relacionada con tiempo."
+
+        corr = df.corr(numeric_only=True)[col_obj].sort_values(ascending=False)
+        mejor = corr.drop(col_obj).idxmax()
+        valor = corr.drop(col_obj).max()
+
+        tabla = corr.to_frame("Correlación").to_markdown()
+
+        return f"""
+# 🔎 Análisis de correlación para **{col_obj}**
+
+## 📘 Todas las correlaciones
+{tabla}
+
+---
+
+## 🥇 Variable más correlacionada
+**{mejor}** con **{valor:.4f}**
+"""
+
+    # Si no es correlación, ejecutar Python normalmente
+    repl = PythonAstREPLTool(locals={"df": df})
+    return repl.run(pregunta)
+
+
+# ---------------------------------------------------------
 # CREAR HERRAMIENTAS
-# -------------------------------------------------------------------
+# ---------------------------------------------------------
 def crear_herramientas(df):
 
     herramienta_info = StructuredTool.from_function(
         name="Informaciones DF",
-        func=informacion_df,
+        func=lambda pregunta: informacion_df(pregunta, df),
         description="Devuelve información general del dataframe.",
         return_direct=True
     )
 
     herramienta_resumen = StructuredTool.from_function(
         name="Resumen Estadístico",
-        func=resumen_estadistico,
+        func=lambda pregunta: resumen_estadistico(pregunta, df),
         description="Devuelve un análisis estadístico del dataframe.",
         return_direct=True
     )
 
     herramienta_grafico = StructuredTool.from_function(
         name="Generar Gráfico",
-        func=generar_grafico,
+        func=lambda pregunta: generar_grafico(pregunta, df),
         description="Genera un gráfico en base a una pregunta del usuario.",
         return_direct=True
     )
 
-    herramienta_python = PythonAstREPLTool(locals={"df": df})
-    herramienta_python.name = "Herramienta Códigos de Python"
+    herramienta_python = StructuredTool.from_function(
+        name="Herramienta Códigos de Python",
+        func=lambda pregunta: ejecutar_python_inteligente(pregunta, df),
+        description="Ejecuta cálculos en Python directamente sobre df.",
+        return_direct=True
+    )
 
     return [
         herramienta_info,
